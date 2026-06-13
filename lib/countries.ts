@@ -200,8 +200,23 @@ export const COUNTRIES: Country[] = [
 ];
 
 const CODES = new Set(COUNTRIES.map((c) => c.code));
+const NAME_BY_CODE = new Map(COUNTRIES.map((c) => [c.code, c.name]));
 
 /** True if the given string is a known ISO country code. */
 export function isValidCountryCode(code: string): boolean {
   return CODES.has(code);
+}
+
+/** Country name for an ISO code (falls back to the code itself). */
+export function countryName(code?: string | null): string {
+  if (!code) return "";
+  return NAME_BY_CODE.get(code) ?? code;
+}
+
+/** Emoji flag for an ISO alpha-2 code. */
+export function countryFlag(code?: string | null): string {
+  if (!code || code.length !== 2) return "";
+  return code
+    .toUpperCase()
+    .replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
 }

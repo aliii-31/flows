@@ -1,17 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { getStore } from "@/lib/store";
+import type { Profile } from "../profile/route";
 
 export type Activity = {
   direction: "sent" | "received";
   counterparty: string; // the other wallet
+  counterparty_name?: string; // their Flows name, snapshotted at send time
+  counterparty_country?: string; // their ISO country code
   amount: string; // human-readable USDC, e.g. "5.00"
   hash: string; // tx hash
   at: string; // ISO timestamp
 };
 
-const activityKey = (address: string) =>
-  `activity:${address.toLowerCase()}`;
+const activityKey = (address: string) => `activity:${address.toLowerCase()}`;
+const profileKey = (address: string) => `profile:${address.toLowerCase()}`;
 
 async function append(address: string, entry: Activity) {
   const store = getStore();
@@ -51,10 +54,34 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Snapshot each party's name/country so history reads cleanly later, even if
+  // a profile changes.
+  const store = getStore();
+  const [fromProfile, toProfile] = await Promise.all([
+    store.get<Profile>(profileKey(from)),
+    store.get<Profile>(profileKey(to)),
+  ]);
+
   const at = new Date().toISOString();
   await Promise.all([
-    append(from, { direction: "sent", counterparty: to, amount, hash, at }),
-    append(to, { direction: "received", counterparty: from, amount, hash, at }),
+    append(from, {
+      direction: "sent",
+      counterparty: to,
+      counterparty_name: toProfile?.name,
+      counterparty_country: toProfile?.country,
+      amount,
+      hash,
+      at,
+    }),
+    append(to, {
+      direction: "received",
+      counterparty: from,
+      counterparty_name: fromProfile?.name,
+      counterparty_country: fromProfile?.country,
+      amount,
+      hash,
+      at,
+    }),
   ]);
 
   return NextResponse.json({ ok: true });

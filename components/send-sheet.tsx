@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSendTransaction } from "@privy-io/react-auth";
 import { encodeFunctionData, erc20Abi, isAddress, parseUnits } from "viem";
 import { defaultChain } from "@/lib/chains";
 import { getUsdcAddress, USDC_DECIMALS } from "@/lib/usdc";
+import { countryFlag, countryName } from "@/lib/countries";
 import Sheet from "./sheet";
+
+type Recipient = { name?: string; country?: string } | null;
 
 const explorerTxUrl = (hash: string) => {
   const base = defaultChain.blockExplorers?.default.url;
@@ -31,6 +34,33 @@ export default function SendSheet({
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [sentHash, setSentHash] = useState<string | null>(null);
 
+  // Look up the recipient's Flows profile (name + country) as a valid address
+  // is entered, to confirm who's being paid.
+  const [recipient, setRecipient] = useState<Recipient>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+
+  useEffect(() => {
+    if (!isAddress(to)) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      setLookingUp(true);
+      fetch(`/api/profile?address=${to}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          setRecipient(
+            d.profile ? { name: d.profile.name, country: d.profile.country } : {}
+          );
+        })
+        .catch(() => !cancelled && setRecipient({}))
+        .finally(() => !cancelled && setLookingUp(false));
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [to]);
+
   const usdc = getUsdcAddress();
   const amountNum = Number(amount);
   const canSend =
@@ -45,6 +75,7 @@ export default function SendSheet({
     setAmount("");
     setStatus({ kind: "idle" });
     setSentHash(null);
+    setRecipient(null);
   };
 
   const close = () => {
@@ -132,6 +163,41 @@ export default function SendSheet({
             </span>
           )}
         </label>
+
+        {isAddress(to) && (
+          <div className="flex items-center gap-3 rounded-xl border border-line bg-ground px-4 py-3">
+            {lookingUp || recipient === null ? (
+              <span className="text-ink-soft text-sm">Looking up recipient…</span>
+            ) : recipient?.name ? (
+              <>
+                <span className="bg-surface border-line text-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-medium">
+                  {recipient.name[0]?.toUpperCase()}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{recipient.name}</p>
+                  {recipient.country && (
+                    <p className="text-ink-soft truncate text-xs">
+                      {countryFlag(recipient.country)} {countryName(recipient.country)}
+                    </p>
+                  )}
+                </div>
+                <span className="text-accent text-xs">Flows user</span>
+              </>
+            ) : (
+              <>
+                <span className="bg-surface border-line text-ink-soft flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm">
+                  ↑
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">New recipient</p>
+                  <p className="text-ink-soft truncate text-xs tabular-nums">
+                    {to.slice(0, 10)}…{to.slice(-6)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-ink-soft text-sm">Amount (USDC)</span>
           <input

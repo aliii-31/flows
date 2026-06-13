@@ -45,21 +45,23 @@ export default function ActivityList({
         <ul className="flex flex-col gap-1">
           {items.map((it, i) => {
             const received = it.direction === "received";
+            const who = it.counterparty_name ?? short(it.counterparty);
             return (
               <li
                 key={`${it.hash}-${i}`}
                 className="flex items-center gap-3 py-2"
               >
-                <span className="border-line bg-ground text-ink-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-base">
-                  {received ? "↓" : "↑"}
+                <span className="border-line bg-ground text-ink-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-base font-medium">
+                  {it.counterparty_name
+                    ? it.counterparty_name[0]?.toUpperCase()
+                    : received
+                      ? "↓"
+                      : "↑"}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">
-                    {received ? "Received" : "Sent"}
-                  </p>
+                  <p className="truncate text-sm">{who}</p>
                   <p className="text-ink-soft truncate text-xs">
-                    {received ? "from" : "to"} {short(it.counterparty)} ·{" "}
-                    {timeAgo(it.at)}
+                    {received ? "Received" : "Sent"} · {timeAgo(it.at)}
                   </p>
                 </div>
                 <span
