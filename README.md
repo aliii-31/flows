@@ -10,9 +10,9 @@ ID human verification. Senders simply never verify; receivers do.
 
 - Next.js (App Router) + TypeScript + Tailwind
 - [Privy](https://privy.io) embedded wallets (email + SMS login, no seed phrase)
-- [World ID](https://world.org/world-id) human verification with **server-side
-  proof validation** (`@worldcoin/idkit` v2 — pinned because v4 dropped the
-  `IDKitWidget` incognito-actions API this app uses)
+- [World ID 4.0](https://docs.world.org/world-id/overview) human verification
+  (`@worldcoin/idkit` 4.x) with a **backend RP signature** and **server-side
+  proof validation** — soft KYC by proof of human, one human per account
 - viem for chain reads (Arc testnet default, Base mainnet)
 
 ## Setup
@@ -26,17 +26,21 @@ ID human verification. Senders simply never verify; receivers do.
 2. **Privy app ID** — create an app at [dashboard.privy.io](https://dashboard.privy.io).
    Enable email and SMS login. Copy the App ID.
 
-3. **World ID app** — create a **staging** app at
-   [developer.worldcoin.org](https://developer.worldcoin.org). Add an
-   **incognito action** named `verify-human`. Copy the app ID (`app_staging_…`).
-   Test proofs with the [World ID simulator](https://simulator.worldcoin.org).
+3. **World ID 4.0 app** — create an app at
+   [developer.world.org](https://developer.world.org) and click **Enable World
+   ID 4.0** to register a Relying Party. Create an action named `verify-human`.
+   Copy three values: the **app ID** (`app_…`), the **RP ID** (`rp_…`), and the
+   **RP signing key** (store as a secret). Test proofs with the
+   [simulator](https://simulator.worldcoin.org) (set environment to staging).
 
 4. **Env vars** — fill `.env.local` (template in `.env.example`):
 
    ```
    NEXT_PUBLIC_PRIVY_APP_ID=        # from dashboard.privy.io
    NEXT_PUBLIC_PRIVY_CLIENT_ID=     # optional; dashboard → App settings → Clients
-   NEXT_PUBLIC_WLD_APP_ID=          # app_staging_… from developer.worldcoin.org
+   NEXT_PUBLIC_WLD_APP_ID=          # app_…  from developer.world.org
+   NEXT_PUBLIC_WLD_RP_ID=           # rp_…   from "Enable World ID 4.0"
+   WLD_RP_SIGNING_KEY=              # server-only secret; signs verification requests
    NEXT_PUBLIC_WLD_ACTION=verify-human
    NEXT_PUBLIC_ARC_RPC_URL=         # TODO: from Arc docs at the venue
    NEXT_PUBLIC_ARC_CHAIN_ID=        # TODO: from Arc docs
@@ -61,16 +65,29 @@ ID human verification. Senders simply never verify; receivers do.
    pnpm dev
    ```
 
-## How verification works
+## How verification works (World ID 4.0)
 
-The IDKit widget collects a World ID proof in the browser and POSTs it to
-`/api/verify-worldid`. The server calls World's v2 verify endpoint
-(`https://developer.worldcoin.org/api/v2/verify/{app_id}`) with the proof,
-action, and signal — the signal is the user's Privy wallet address. On success
-the server persists `{ nullifier_hash, wallet_address, verified_at }` and
-rejects any nullifier already bound to a different wallet: one human, one
-account. Client-side verification is never trusted alone, and no auth or
-verification state is kept in localStorage.
+Soft KYC by proof of human: prove you're a unique person, no documents.
+
+1. **Sign** — when the user taps Verify, the client asks `POST /api/worldid/sign`.
+   The backend signs the proof request with the secret `WLD_RP_SIGNING_KEY`
+   (`signRequest` from `@worldcoin/idkit/signing`) and returns the `rp_context`
+   (rp_id, nonce, signature, 5-minute TTL). The action is signed server-side, so
+   it can't be tampered with by the client.
+2. **Prove** — `IDKitRequestWidget` collects a `proofOfHuman` proof in World App
+   (or the simulator), with the user's Privy wallet address as the signal.
+3. **Verify** — the client POSTs the proof to `/api/verify-worldid`, which
+   forwards it to World's v4 verify endpoint
+   (`https://developer.world.org/api/v4/verify/{rp_id}`) for cryptographic
+   validation, then confirms the proof's `signal_hash` matches `hash(wallet)` so
+   a valid proof can't be replayed to bind a different account.
+4. **Bind** — on success the server persists `{ nullifier, wallet_address,
+   action, verified_at }` and rejects any nullifier already linked to a
+   different wallet: **one human, one account** — the Sybil-resistance
+   constraint the FlowScore credit layer depends on.
+
+Client-side verification is never trusted alone, and no auth or verification
+state is kept in localStorage.
 
 ## Supabase (optional)
 

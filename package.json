@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@privy-io/react-auth": "^3.29.2",
-    "@worldcoin/idkit": "^2.4.2",
+    "@worldcoin/idkit": "^4.1.8",
     "next": "16.2.9",
     "qrcode.react": "^4.2.0",
     "react": "19.2.4",

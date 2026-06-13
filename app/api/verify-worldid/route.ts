@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyCloudProof, type ISuccessResult } from "@worldcoin/idkit";
+import { hashSignal } from "@worldcoin/idkit/hashing";
 import { getStore } from "@/lib/store";
 
+// World ID 4.0 verification endpoint (Developer Portal), scoped by RP id.
+const VERIFY_BASE = "https://developer.world.org/api/v4/verify";
+
 type VerificationRecord = {
-  nullifier_hash: string;
+  nullifier: string;
   wallet_address: string;
+  action: string;
   verified_at: string;
 };
 
-const nullifierKey = (hash: string) => `worldid:nullifier:${hash}`;
-const walletKey = (address: string) =>
-  `worldid:wallet:${address.toLowerCase()}`;
+// IDKitResult shape we rely on (v3 legacy and v4 both carry responses[].nullifier).
+type IDKitResponseItem = { nullifier: string; signal_hash?: string };
+type IDKitResult = {
+  action?: string;
+  responses?: IDKitResponseItem[];
+};
 
-/** Verification status for a wallet. Used by the home screen — no client storage. */
+const nullifierKey = (n: string) => `worldid:nullifier:${n}`;
+const walletKey = (a: string) => `worldid:wallet:${a.toLowerCase()}`;
+
+/** Verification status for a wallet. Read by the home screen — no client storage. */
 export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get("address");
   if (!address) {
@@ -26,45 +36,74 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Backend round-trip for World ID (qualification requirement): the client
- * posts the IDKit proof here and the server verifies it against World's
- * v2 verify endpoint. Signal is the user's Privy wallet address. A
- * nullifier_hash already bound to a different wallet is rejected — one
- * human, one account.
+ * Backend proof validation (World ID 4.0, a bounty qualification requirement).
+ * The client posts the IDKit result and its wallet address (the proof's
+ * signal). We:
+ *   1. Forward the proof to the v4 verify endpoint for cryptographic checks.
+ *   2. Confirm the proof's signal_hash matches this wallet, so a valid proof
+ *      can't be replayed to bind another account.
+ *   3. Persist { nullifier, wallet } and reject a nullifier already bound to a
+ *      different wallet — one human, one account.
+ * Client-side verification is never trusted alone.
  */
 export async function POST(req: NextRequest) {
-  const appId = process.env.NEXT_PUBLIC_WLD_APP_ID as
-    | `app_${string}`
-    | undefined;
-  const action = process.env.NEXT_PUBLIC_WLD_ACTION ?? "verify-human";
-  if (!appId) {
+  const rpId = process.env.NEXT_PUBLIC_WLD_RP_ID;
+  if (!rpId) {
     return NextResponse.json(
-      { error: "NEXT_PUBLIC_WLD_APP_ID is not configured on the server" },
+      { error: "NEXT_PUBLIC_WLD_RP_ID is not configured on the server" },
       { status: 500 }
     );
   }
 
-  let body: { proof?: ISuccessResult; signal?: string };
+  let body: { idkitResponse?: IDKitResult; signal?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { proof, signal } = body;
-  if (!proof?.nullifier_hash || !signal) {
+  const { idkitResponse, signal } = body;
+  const item = idkitResponse?.responses?.[0];
+  if (!item?.nullifier || !signal) {
     return NextResponse.json(
-      { error: "proof and signal (wallet address) are required" },
+      { error: "idkitResponse and signal (wallet address) are required" },
+      { status: 400 }
+    );
+  }
+
+  // 1. Cryptographic verification at the Developer Portal.
+  const verifyRes = await fetch(`${VERIFY_BASE}/${rpId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(idkitResponse),
+  });
+  if (!verifyRes.ok) {
+    const detail = await verifyRes.text().catch(() => "");
+    return NextResponse.json(
+      { error: "World ID verification failed", detail },
+      { status: 400 }
+    );
+  }
+
+  // 2. Bind the proof to this wallet: the signal_hash must match hash(wallet).
+  if (item.signal_hash && item.signal_hash !== hashSignal(signal)) {
+    return NextResponse.json(
+      { error: "Proof signal does not match this wallet." },
       { status: 400 }
     );
   }
 
   const store = getStore();
+  const action =
+    idkitResponse?.action ??
+    process.env.NEXT_PUBLIC_WLD_ACTION ??
+    "verify-human";
+
+  // 3. One human, one account.
   const existing = await store.get<VerificationRecord>(
-    nullifierKey(proof.nullifier_hash)
+    nullifierKey(item.nullifier)
   );
   if (existing) {
     if (existing.wallet_address.toLowerCase() === signal.toLowerCase()) {
-      // Same human re-verifying the same account — idempotent success.
       return NextResponse.json({ verified: true, already_verified: true });
     }
     return NextResponse.json(
@@ -76,25 +115,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await verifyCloudProof(proof, appId, action, signal);
-  if (!result.success) {
-    return NextResponse.json(
-      {
-        error: result.detail ?? "World ID verification failed",
-        code: result.code,
-        world_response: result,
-      },
-      { status: 400 }
-    );
-  }
-
   const record: VerificationRecord = {
-    nullifier_hash: proof.nullifier_hash,
+    nullifier: item.nullifier,
     wallet_address: signal,
+    action,
     verified_at: new Date().toISOString(),
   };
-  await store.set(nullifierKey(proof.nullifier_hash), record);
+  await store.set(nullifierKey(item.nullifier), record);
   await store.set(walletKey(signal), record);
 
-  return NextResponse.json({ verified: true, world_response: result });
+  return NextResponse.json({ verified: true });
 }

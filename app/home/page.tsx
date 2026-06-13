@@ -1,16 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
-import { IDKitWidget, type ISuccessResult } from "@worldcoin/idkit";
 import Balance from "@/components/balance";
-import FlowScoreRing from "@/components/flow-score-ring";
+import WorldIdVerify from "@/components/world-id-verify";
 import SendSheet from "@/components/send-sheet";
 import ReceiveSheet from "@/components/receive-sheet";
-
-const wldAppId = process.env.NEXT_PUBLIC_WLD_APP_ID;
-const wldAction = process.env.NEXT_PUBLIC_WLD_ACTION ?? "verify-human";
 
 export default function Home() {
   const { ready, authenticated, logout, user } = usePrivy();
@@ -18,7 +14,6 @@ export default function Home() {
   const address = user?.wallet?.address;
 
   const [verified, setVerified] = useState(false);
-  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [openSheet, setOpenSheet] = useState<"send" | "receive" | null>(null);
 
   useEffect(() => {
@@ -33,24 +28,6 @@ export default function Home() {
       .then((data) => setVerified(!!data.verified))
       .catch(() => {});
   }, [address]);
-
-  const handleVerify = useCallback(
-    async (proof: ISuccessResult) => {
-      setVerifyError(null);
-      const res = await fetch("/api/verify-worldid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proof, signal: address }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const message = data.error ?? "Verification failed. Try again.";
-        setVerifyError(message);
-        throw new Error(message); // surfaces the failure inside the widget too
-      }
-    },
-    [address]
-  );
 
   if (!ready || !authenticated) {
     return (
@@ -75,34 +52,11 @@ export default function Home() {
       <section className="flex flex-col items-center gap-8 pt-8">
         <Balance address={address} />
 
-        {wldAppId && address && !verified ? (
-          <IDKitWidget
-            app_id={wldAppId as `app_${string}`}
-            action={wldAction}
-            signal={address}
-            handleVerify={handleVerify}
-            onSuccess={() => setVerified(true)}
-          >
-            {({ open }) => (
-              <FlowScoreRing verified={false} onVerify={open} />
-            )}
-          </IDKitWidget>
-        ) : (
-          <FlowScoreRing
-            verified={verified}
-            onVerify={() =>
-              setVerifyError(
-                "World ID is not configured. Set NEXT_PUBLIC_WLD_APP_ID in .env.local."
-              )
-            }
-          />
-        )}
-
-        {verifyError && (
-          <p className="max-w-xs text-center text-sm text-red-400">
-            {verifyError}
-          </p>
-        )}
+        <WorldIdVerify
+          address={address}
+          verified={verified}
+          onVerified={() => setVerified(true)}
+        />
 
         <div className="grid w-full grid-cols-2 gap-3">
           <button
