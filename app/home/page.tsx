@@ -68,12 +68,20 @@ export default function Home() {
           />
           Inflow
         </span>
-        <button
-          onClick={logout}
-          className="text-ink-soft text-xs hover:text-ink"
-        >
-          Log out
-        </button>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => router.push("/cards")}
+            className="text-ink-soft text-xs hover:text-ink"
+          >
+            Cards
+          </button>
+          <button
+            onClick={logout}
+            className="text-ink-soft text-xs hover:text-ink"
+          >
+            Log out
+          </button>
+        </div>
       </header>
 
       <section className="flex flex-col items-center gap-8 pt-8">
