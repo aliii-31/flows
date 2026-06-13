@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  /* Inflow design tokens */
+  --color-ground: #14110f;
+  --color-surface: #1d1916;
+  --color-line: #2a241f;
+  --color-ink: #f4efe9;
+  --color-ink-soft: #9b9189;
+  /* Accent is for the credit layer only: ring, verified badge, deltas. */
+  --color-accent: #e8a33d;
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
