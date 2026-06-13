@@ -35,6 +35,7 @@ export async function PUT(req: NextRequest) {
       longevity: clamp(body.flowLine.longevity),
       volume: clamp(body.flowLine.volume),
       growth: clamp(body.flowLine.growth),
+      sensitivity: clamp(body.flowLine.sensitivity),
     },
   };
   await setScoringConfig(config);

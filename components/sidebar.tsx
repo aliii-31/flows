@@ -12,6 +12,7 @@ const NAV: NavItem[] = [
   { label: "Hold", href: "/portfolio" },
   { label: "Card", href: "/cards" },
   { label: "Grow", href: "/grow" },
+  { label: "Pool", href: "/pool" },
 ];
 
 export default function Sidebar() {

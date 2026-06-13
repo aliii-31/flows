@@ -1,5 +1,5 @@
 import { defineChain, type Chain } from "viem";
-import { base, arbitrum, optimism, polygon } from "viem/chains";
+import { base, arbitrum, optimism, polygon, baseSepolia } from "viem/chains";
 
 const arcRpcUrl = process.env.NEXT_PUBLIC_ARC_RPC_URL;
 const arcChainId = Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID);
@@ -23,9 +23,11 @@ export const arcTestnet: Chain | null =
 // Base mainnet is the primary chain — it's where Privy Earn (Morpho USDC
 // vaults) lives. The other EVM chains are enabled so the LI.FI swap widget can
 // route from the embedded wallet across them. Arc testnet stays optional.
-const evmChains: Chain[] = [base, arbitrum, optimism, polygon];
+// baseSepolia is included so the lending pool (testnet) can operate from the
+// same embedded wallet; mainnet chains stay for grow/send/swap.
+const evmChains: Chain[] = [base, arbitrum, optimism, polygon, baseSepolia];
 export const supportedChains: [Chain, ...Chain[]] = arcTestnet
-  ? [base, arbitrum, optimism, polygon, arcTestnet]
+  ? [base, arbitrum, optimism, polygon, baseSepolia, arcTestnet]
   : (evmChains as [Chain, ...Chain[]]);
 
 export const defaultChain: Chain = base;

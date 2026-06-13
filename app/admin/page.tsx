@@ -54,9 +54,21 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+type PoolStats = {
+  configured: boolean;
+  tvl?: number;
+  liquidity?: number;
+  outstandingPrincipal?: number;
+  collateralHeld?: number;
+  feesCollected?: number;
+  loanCount?: number;
+  utilization?: number;
+};
+
 export default function Admin() {
   const [data, setData] = useState<AdminData | null>(null);
   const [config, setConfig] = useState<ScoringConfig | null>(null);
+  const [pool, setPool] = useState<PoolStats | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -75,6 +87,19 @@ export default function Admin() {
         setData(d);
         setConfig(d.config);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/lending/pool")
+      .then((r) => r.json())
+      .then((p: PoolStats) => {
+        if (!cancelled) setPool(p);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -113,7 +138,8 @@ export default function Admin() {
     );
   }
 
-  const { stats, timeseries, byType, byDomain, byCountry, corridors, scoreDistribution, users } = data;
+  const { stats, timeseries, byType, byDomain, byCountry, corridors, scoreDistribution, users, flowLines } = data;
+  const healthColor = (h: string) => (h === "healthy" ? ACCENT : h === "watch" ? "#c79a5e" : AXIS);
 
   const statCards = [
     { label: "Users", value: stats.users.toLocaleString() },
@@ -248,6 +274,69 @@ export default function Admin() {
         </Panel>
       </div>
 
+      {/* Lending pool */}
+      <div className="card mt-4 p-5">
+        <p className="mb-4 text-sm font-medium">Lending pool (Base Sepolia)</p>
+        {!pool?.configured ? (
+          <p className="text-ink-soft text-sm">Pool not deployed yet.</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+            {[
+              { label: "TVL", value: money(pool.tvl ?? 0) },
+              { label: "Available", value: money(pool.liquidity ?? 0) },
+              { label: "Lent out", value: money(pool.outstandingPrincipal ?? 0) },
+              { label: "Collateral", value: money(pool.collateralHeld ?? 0) },
+              { label: "Utilization", value: `${pool.utilization ?? 0}%` },
+              { label: "Fees", value: money(pool.feesCollected ?? 0) },
+            ].map((s) => (
+              <div key={s.label}>
+                <p className="eyebrow">{s.label}</p>
+                <p className="mt-1 text-base font-semibold tabular-nums">{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* FlowLines */}
+      <div className="card mt-4 p-5">
+        <p className="mb-4 text-sm font-medium">FlowLines</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-ink-soft border-b border-line text-left text-xs">
+                <th className="pb-2 pr-3 font-normal">Line (sender → receiver)</th>
+                <th className="pb-2 pr-3 text-right font-normal">LineScore</th>
+                <th className="pb-2 pr-3 font-normal">Health</th>
+                <th className="pb-2 pr-3 text-right font-normal">Volume</th>
+                <th className="pb-2 text-right font-normal">Payments</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flowLines.slice(0, 30).map((l) => (
+                <tr key={l.id} className="border-b border-line/60">
+                  <td className="py-2 pr-3">
+                    {(l.senderName ?? short(l.sender))} → {(l.receiverName ?? short(l.receiver))}
+                    {l.senderCountry && l.receiverCountry ? (
+                      <span className="text-ink-soft text-xs"> · {l.senderCountry}→{l.receiverCountry}</span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-medium tabular-nums" style={{ color: scoreColor(l.lineScore) }}>
+                    {l.lineScore}
+                  </td>
+                  <td className="py-2 pr-3 text-xs" style={{ color: healthColor(l.health) }}>{l.health}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{money(l.total)}</td>
+                  <td className="py-2 text-right tabular-nums">{l.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {flowLines.length === 0 && (
+            <p className="text-ink-soft py-6 text-center text-sm">No FlowLines yet.</p>
+          )}
+        </div>
+      </div>
+
       {/* Users table */}
       <div className="card mt-4 p-5">
         <p className="mb-4 text-sm font-medium">Users by FlowScore</p>
@@ -338,6 +427,26 @@ export default function Admin() {
             </div>
           </div>
         </div>
+
+        {/* FlowLine sensitivity */}
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="eyebrow">FlowLine sensitivity</p>
+            <span className="text-sm tabular-nums">{config.flowLine.sensitivity}</span>
+          </div>
+          <input
+            type="range" min={0} max={100} value={config.flowLine.sensitivity}
+            onChange={(e) =>
+              setConfig({ ...config, flowLine: { ...config.flowLine, sensitivity: Number(e.target.value) } })
+            }
+            className="accent-accent w-full"
+          />
+          <p className="text-ink-soft mt-1 text-xs">
+            Higher = recent behavior dominates (a missed remittance drops the line
+            faster) and the lending collateral band swings more sharply with score.
+          </p>
+        </div>
+
         <button
           onClick={saveWeights}
           disabled={busy !== null}

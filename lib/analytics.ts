@@ -1,5 +1,6 @@
 import type { StoredEvent } from "./events";
 import type { ScoringConfig } from "./scoring";
+import { computeFlowLines, type FlowLine } from "./flowline";
 
 // Maps event types to product domains for volume breakdowns.
 const DOMAIN: Record<string, string> = {
@@ -10,15 +11,6 @@ const DOMAIN: Record<string, string> = {
   "lock.created": "Grow",
   "card.order": "Cards",
   "swap.executed": "Hold",
-};
-
-export type FlowLine = {
-  counterparty: string;
-  name?: string;
-  country?: string;
-  count: number;
-  total: number;
-  score: number;
 };
 
 export type UserRow = {
@@ -53,6 +45,7 @@ export type Analytics = {
   corridors: { corridor: string; volume: number; count: number }[];
   scoreDistribution: { bucket: string; count: number }[];
   users: UserRow[];
+  flowLines: FlowLine[];
 };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -270,5 +263,6 @@ export function computeAnalytics(
     corridors,
     scoreDistribution: dist,
     users,
+    flowLines: computeFlowLines(events, config),
   };
 }

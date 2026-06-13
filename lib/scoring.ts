@@ -19,12 +19,16 @@ export type ScoringConfig = {
     longevity: number; // months active
     volume: number; // total received
     growth: number; // increasing over time
+    // 0–100: how reactive the LineScore is to recent activity, and how wide the
+    // lending collateral band (50–75%) swings with the score. Higher = a missed
+    // remittance drops the line faster and collateral reacts more sharply.
+    sensitivity: number;
   };
 };
 
 export const DEFAULT_SCORING: ScoringConfig = {
   flowScore: { flowlines: 40, liquidity: 20, repayment: 20, integrity: 12, trading: 8 },
-  flowLine: { consistency: 35, longevity: 25, volume: 25, growth: 15 },
+  flowLine: { consistency: 35, longevity: 25, volume: 25, growth: 15, sensitivity: 50 },
 };
 
 const KEY = "scoring:config";
