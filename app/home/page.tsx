@@ -10,6 +10,7 @@ import WorldIdVerify from "@/components/world-id-verify";
 import SendSheet from "@/components/send-sheet";
 import ReceiveSheet from "@/components/receive-sheet";
 import ActivityList from "@/components/activity-list";
+import RampButtons from "@/components/ramp-buttons";
 
 function greeting() {
   const h = new Date().getHours();
@@ -128,6 +129,7 @@ export default function Home() {
                       ↓ Receive
                     </button>
                   </div>
+                  <RampButtons onDone={() => setRefresh((n) => n + 1)} />
                 </div>
               </section>
               <ActivityList address={address} reloadSignal={refresh} />
