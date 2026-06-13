@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
+import Balance from "@/components/balance";
 
 export default function Home() {
   const { ready, authenticated, logout, user } = usePrivy();
@@ -33,10 +34,7 @@ export default function Home() {
       </header>
 
       <section className="flex flex-col items-center gap-8 pt-8">
-        <p className="text-5xl font-semibold tabular-nums">0.00</p>
-        <p className="text-ink-soft text-xs">
-          {user?.wallet?.address ?? "Creating your account…"}
-        </p>
+        <Balance address={user?.wallet?.address} />
       </section>
     </main>
   );
