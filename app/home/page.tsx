@@ -6,6 +6,8 @@ import { usePrivy } from "@privy-io/react-auth";
 import { IDKitWidget, type ISuccessResult } from "@worldcoin/idkit";
 import Balance from "@/components/balance";
 import FlowScoreRing from "@/components/flow-score-ring";
+import SendSheet from "@/components/send-sheet";
+import ReceiveSheet from "@/components/receive-sheet";
 
 const wldAppId = process.env.NEXT_PUBLIC_WLD_APP_ID;
 const wldAction = process.env.NEXT_PUBLIC_WLD_ACTION ?? "verify-human";
@@ -17,6 +19,7 @@ export default function Home() {
 
   const [verified, setVerified] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [openSheet, setOpenSheet] = useState<"send" | "receive" | null>(null);
 
   useEffect(() => {
     if (ready && !authenticated) router.replace("/");
@@ -100,7 +103,36 @@ export default function Home() {
             {verifyError}
           </p>
         )}
+
+        <div className="grid w-full grid-cols-2 gap-3">
+          <button
+            onClick={() => setOpenSheet("send")}
+            className="rounded-xl border border-line bg-surface py-3.5 text-ink"
+          >
+            Send
+          </button>
+          <button
+            onClick={() => setOpenSheet("receive")}
+            className="rounded-xl border border-line bg-surface py-3.5 text-ink"
+          >
+            Receive
+          </button>
+        </div>
+
+        <div className="w-full">
+          <h2 className="text-ink-soft mb-3 text-sm">Recent activity</h2>
+          <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-ink-soft">
+            No activity yet.
+          </p>
+        </div>
       </section>
+
+      <SendSheet open={openSheet === "send"} onClose={() => setOpenSheet(null)} />
+      <ReceiveSheet
+        open={openSheet === "receive"}
+        onClose={() => setOpenSheet(null)}
+        address={address}
+      />
     </main>
   );
 }
