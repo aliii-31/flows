@@ -5,10 +5,13 @@ import {
   http,
   type Address,
 } from "viem";
+import { baseSepolia } from "viem/chains";
 import { defaultChain } from "./chains";
 import { getUsdcAddress } from "./usdc";
+import { SEPOLIA_USDC } from "./flowpool";
 
 const client = createPublicClient({ chain: defaultChain, transport: http() });
+const sepoliaClient = createPublicClient({ chain: baseSepolia, transport: http() });
 
 /** USDC balance on the default chain, formatted to 2 decimals. "0.00" on any failure. */
 export async function getUsdcBalance(address: Address): Promise<string> {
@@ -34,6 +37,21 @@ export async function getUsdcBalance(address: Address): Promise<string> {
     return Number(
       formatUnits(raw, defaultChain.nativeCurrency.decimals)
     ).toFixed(2);
+  } catch {
+    return "0.00";
+  }
+}
+
+/** Testnet USDC balance on Base Sepolia (for lending tests), formatted to 2 decimals. */
+export async function getSepoliaUsdcBalance(address: Address): Promise<string> {
+  try {
+    const raw = await sepoliaClient.readContract({
+      address: SEPOLIA_USDC,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [address],
+    });
+    return Number(formatUnits(raw, 6)).toFixed(2);
   } catch {
     return "0.00";
   }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
-import { getUsdcBalance } from "@/lib/balance";
+import { getSepoliaUsdcBalance, getUsdcBalance } from "@/lib/balance";
 
 export default function Balance({
   address,
@@ -12,12 +12,16 @@ export default function Balance({
   reloadSignal?: number;
 }) {
   const [balance, setBalance] = useState("0.00");
+  const [testnet, setTestnet] = useState("0.00");
 
   useEffect(() => {
     if (!address) return;
     let cancelled = false;
     getUsdcBalance(address as Address).then((b) => {
       if (!cancelled) setBalance(b);
+    });
+    getSepoliaUsdcBalance(address as Address).then((b) => {
+      if (!cancelled) setTestnet(b);
     });
     return () => {
       cancelled = true;
@@ -38,6 +42,13 @@ export default function Balance({
         <span className="text-ink-soft">$</span>
         {whole}
         <span className="text-ink-soft">.{cents}</span>
+      </p>
+      <p className="text-ink-soft mt-1.5 text-xs tabular-nums">
+        Base Sepolia · {Number(testnet).toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}{" "}
+        USDC <span className="opacity-60">(testnet, for lending)</span>
       </p>
     </div>
   );

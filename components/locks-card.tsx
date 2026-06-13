@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LOCK_TERMS, maturityValue, type Lock, type LockTerm } from "@/lib/locks";
+import {
+  LOCK_TERMS,
+  currentValue,
+  maturityValue,
+  type Lock,
+  type LockTerm,
+} from "@/lib/locks";
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, {
@@ -23,6 +29,7 @@ export default function LocksCard({ address }: { address?: string }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const fetchLocks = useCallback(async (): Promise<Lock[]> => {
     if (!address) return [];
@@ -44,6 +51,13 @@ export default function LocksCard({ address }: { address?: string }) {
       cancelled = true;
     };
   }, [fetchLocks]);
+
+  // Tick every second so the accrued value visibly grows while locks are active.
+  useEffect(() => {
+    if (locks.length === 0) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [locks.length]);
 
   const lock = useCallback(async () => {
     if (!address || Number(amount) <= 0) return;
@@ -68,6 +82,7 @@ export default function LocksCard({ address }: { address?: string }) {
     }
   }, [address, amount, months, fetchLocks]);
 
+  const liveTotal = locks.reduce((sum, l) => sum + currentValue(l, now), 0);
   const selectedApy = LOCK_TERMS.find((t) => t.months === months)?.apy ?? 0;
   const preview =
     Number(amount) > 0
@@ -133,31 +148,47 @@ export default function LocksCard({ address }: { address?: string }) {
 
       {locks.length > 0 && (
         <div className="mt-5 flex flex-col gap-3">
-          <p className="eyebrow">Active locks</p>
-          {locks.map((l) => (
-            <div key={l.id} className="rounded-xl border border-line bg-ground p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm tabular-nums">
-                  ${l.amount} · {l.months} months
-                </span>
-                <span className="text-accent text-xs font-medium">
-                  {l.apy.toFixed(1)}% APY
-                </span>
+          <div className="flex items-end justify-between">
+            <p className="eyebrow">Locked &amp; growing</p>
+            <p className="text-accent text-lg font-semibold tabular-nums">
+              ${liveTotal.toFixed(6)}
+            </p>
+          </div>
+          {locks.map((l) => {
+            const live = currentValue(l, now);
+            const earned = live - Number(l.amount);
+            const matured = now >= new Date(l.matures_at).getTime();
+            return (
+              <div key={l.id} className="rounded-xl border border-line bg-ground p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-base font-medium tabular-nums">
+                    ${live.toFixed(6)}
+                  </span>
+                  <span className="text-accent text-xs font-medium">
+                    {l.apy.toFixed(1)}% APY
+                  </span>
+                </div>
+                <p className="text-ink-soft mt-0.5 text-xs tabular-nums">
+                  ${l.amount} principal ·{" "}
+                  <span className="text-accent">+${earned.toFixed(6)}</span> earned
+                </p>
+                <div className="bg-line mt-3 h-1.5 overflow-hidden rounded-full">
+                  <div
+                    className="bg-accent h-full rounded-full transition-all duration-1000 ease-linear"
+                    style={{ width: `${progress(l) * 100}%` }}
+                  />
+                </div>
+                <p className="text-ink-soft mt-2 text-xs">
+                  {matured ? "Matured" : "Matures"} {fmtDate(l.matures_at)} ·{" "}
+                  {l.months} months ·{" "}
+                  <span className="text-ink tabular-nums">
+                    ${maturityValue(l).toFixed(2)}
+                  </span>{" "}
+                  at maturity
+                </p>
               </div>
-              <div className="bg-line mt-3 h-1.5 overflow-hidden rounded-full">
-                <div
-                  className="bg-accent h-full rounded-full"
-                  style={{ width: `${progress(l) * 100}%` }}
-                />
-              </div>
-              <p className="text-ink-soft mt-2 text-xs">
-                Matures {fmtDate(l.matures_at)} ·{" "}
-                <span className="text-ink tabular-nums">
-                  ${maturityValue(l).toFixed(2)}
-                </span>
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -27,3 +27,20 @@ export type Lock = {
 export function maturityValue(lock: Pick<Lock, "amount" | "apy" | "months">) {
   return Number(lock.amount) * (1 + (lock.apy / 100) * (lock.months / 12));
 }
+
+const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * Value accrued so far — interest grows continuously from `started_at`, capped
+ * at the maturity value. Drives the live "growing" ticker in the UI.
+ */
+export function currentValue(
+  lock: Pick<Lock, "amount" | "apy" | "started_at" | "matures_at">,
+  at = Date.now()
+) {
+  const start = new Date(lock.started_at).getTime();
+  const end = new Date(lock.matures_at).getTime();
+  const now = Math.min(Math.max(at, start), end);
+  const elapsedYears = (now - start) / YEAR_MS;
+  return Number(lock.amount) * (1 + (lock.apy / 100) * elapsedYears);
+}
