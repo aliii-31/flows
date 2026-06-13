@@ -9,6 +9,7 @@ import WorldIdVerify from "@/components/world-id-verify";
 import SendSheet from "@/components/send-sheet";
 import ReceiveSheet from "@/components/receive-sheet";
 import ActivityList from "@/components/activity-list";
+import GrowCard from "@/components/grow-card";
 
 export default function Home() {
   const { ready, authenticated, logout, user } = usePrivy();
@@ -98,6 +99,8 @@ export default function Home() {
             Receive
           </button>
         </div>
+
+        <GrowCard address={address} />
 
         <ActivityList address={address} reloadSignal={refresh} />
       </section>
