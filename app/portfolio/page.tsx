@@ -119,9 +119,6 @@ export default function Portfolio() {
             </button>
           </section>
 
-          <p className="text-ink-soft mt-3 text-xs">
-            Wallet utility only — swapping here doesn&rsquo;t affect your FlowScore.
-          </p>
         </main>
       </div>
 
