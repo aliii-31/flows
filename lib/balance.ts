@@ -5,28 +5,15 @@ import {
   http,
   type Address,
 } from "viem";
-import { base } from "viem/chains";
-import { arcTestnet, defaultChain } from "./chains";
-
-// TODO: fill Arc USDC address from Arc docs at the venue (or leave empty if
-// USDC is the native currency there — we fall back to the native balance).
-const USDC_ADDRESS: Record<number, Address | undefined> = {
-  [base.id]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  ...(arcTestnet
-    ? {
-        [arcTestnet.id]: process.env.NEXT_PUBLIC_ARC_USDC_ADDRESS as
-          | Address
-          | undefined,
-      }
-    : {}),
-};
+import { defaultChain } from "./chains";
+import { getUsdcAddress } from "./usdc";
 
 const client = createPublicClient({ chain: defaultChain, transport: http() });
 
 /** USDC balance on the default chain, formatted to 2 decimals. "0.00" on any failure. */
 export async function getUsdcBalance(address: Address): Promise<string> {
   try {
-    const usdc = USDC_ADDRESS[defaultChain.id];
+    const usdc = getUsdcAddress();
     if (usdc) {
       const [raw, decimals] = await Promise.all([
         client.readContract({

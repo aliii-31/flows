@@ -7,6 +7,7 @@ import Balance from "@/components/balance";
 import WorldIdVerify from "@/components/world-id-verify";
 import SendSheet from "@/components/send-sheet";
 import ReceiveSheet from "@/components/receive-sheet";
+import ActivityList from "@/components/activity-list";
 
 export default function Home() {
   const { ready, authenticated, logout, user } = usePrivy();
@@ -15,6 +16,8 @@ export default function Home() {
 
   const [verified, setVerified] = useState(false);
   const [openSheet, setOpenSheet] = useState<"send" | "receive" | null>(null);
+  // Bumped after a send to refresh balance + activity.
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     if (ready && !authenticated) router.replace("/");
@@ -50,7 +53,7 @@ export default function Home() {
       </header>
 
       <section className="flex flex-col items-center gap-8 pt-8">
-        <Balance address={address} />
+        <Balance address={address} reloadSignal={refresh} />
 
         <WorldIdVerify
           address={address}
@@ -73,15 +76,15 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="w-full">
-          <h2 className="text-ink-soft mb-3 text-sm">Recent activity</h2>
-          <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-ink-soft">
-            No activity yet.
-          </p>
-        </div>
+        <ActivityList address={address} reloadSignal={refresh} />
       </section>
 
-      <SendSheet open={openSheet === "send"} onClose={() => setOpenSheet(null)} />
+      <SendSheet
+        open={openSheet === "send"}
+        onClose={() => setOpenSheet(null)}
+        address={address}
+        onSent={() => setRefresh((n) => n + 1)}
+      />
       <ReceiveSheet
         open={openSheet === "receive"}
         onClose={() => setOpenSheet(null)}

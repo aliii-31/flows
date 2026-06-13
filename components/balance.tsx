@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import type { Address } from "viem";
 import { getUsdcBalance } from "@/lib/balance";
 
-export default function Balance({ address }: { address?: string }) {
+export default function Balance({
+  address,
+  reloadSignal,
+}: {
+  address?: string;
+  reloadSignal?: number;
+}) {
   const [balance, setBalance] = useState("0.00");
 
   useEffect(() => {
@@ -16,7 +22,7 @@ export default function Balance({ address }: { address?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, reloadSignal]);
 
   return (
     <div className="text-center">
