@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
+import { getEmbeddedWallet } from "@/lib/privy";
 import {
   createSchedule,
   deleteSchedule,
@@ -7,6 +8,11 @@ import {
   updateSchedule,
   type Cadence,
 } from "@/lib/schedules";
+
+function bearer(req: NextRequest) {
+  const h = req.headers.get("authorization") ?? "";
+  return h.startsWith("Bearer ") ? h.slice(7) : null;
+}
 
 const CADENCES: Cadence[] = ["once", "weekly", "monthly", "custom"];
 
@@ -46,8 +52,25 @@ export async function POST(req: NextRequest) {
   if (Number.isNaN(next.getTime())) {
     return NextResponse.json({ error: "invalid next_run date" }, { status: 400 });
   }
+
+  // Resolve the owner's Privy wallet id from their token so the executor can
+  // auto-send. Best-effort: without it the schedule still saves (no auto-run).
+  let walletId: string | undefined;
+  const token = bearer(req);
+  if (token) {
+    try {
+      const wallet = await getEmbeddedWallet(token, b.owner);
+      if (wallet && wallet.address.toLowerCase() === b.owner.toLowerCase()) {
+        walletId = wallet.id;
+      }
+    } catch {
+      /* leave walletId undefined */
+    }
+  }
+
   const schedule = await createSchedule({
     owner: b.owner,
+    walletId,
     to: b.to,
     toName: b.toName,
     amount: b.amount,

@@ -20,10 +20,16 @@ const environment = (process.env.NEXT_PUBLIC_WLD_ENV ?? "staging") as
 type Props = {
   address?: string;
   verified: boolean;
+  score?: number;
   onVerified: () => void;
 };
 
-export default function WorldIdVerify({ address, verified, onVerified }: Props) {
+export default function WorldIdVerify({
+  address,
+  verified,
+  score = 0,
+  onVerified,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +74,7 @@ export default function WorldIdVerify({ address, verified, onVerified }: Props) 
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <FlowScoreRing verified={verified} onVerify={startVerify} />
+      <FlowScoreRing verified={verified} score={score} onVerify={startVerify} />
 
       {rpContext && appId && address && (
         <IDKitRequestWidget

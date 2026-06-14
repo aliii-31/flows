@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   await logEvent({
     type: "onboarding.completed",
     address,
-    payload: { country, role },
+    payload: { country, role, name },
   });
   return NextResponse.json({ profile });
 }

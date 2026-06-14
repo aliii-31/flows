@@ -19,7 +19,11 @@ export type EventType =
   | "grow.withdraw"
   | "lock.created"
   | "card.order"
-  | "swap.executed";
+  | "swap.executed"
+  | "loan.funded"
+  | "loan.repaid"
+  | "loan.delinquent"
+  | "loan.defaulted";
 
 export type AppEvent = {
   type: EventType | string;

@@ -36,52 +36,27 @@ export async function GET(req: NextRequest) {
   ]);
   const all = computeFlowLines(events, config);
 
-  const lines: LineView[] = [];
-  for (const l of all) {
-    if (l.sender === a) {
-      lines.push({
-        id: l.id,
-        counterparty: l.receiver,
-        counterpartyName: l.receiverName,
-        counterpartyCountry: l.receiverCountry,
-        role: "sender",
-        lineScore: Math.max(1, l.lineScore),
-        health: l.health,
-        count: l.count,
-        total: l.total,
-        lastActivity: l.lastActivity,
-      });
-    } else if (l.receiver === a) {
-      lines.push({
-        id: l.id,
-        counterparty: l.sender,
-        counterpartyName: l.senderName,
-        counterpartyCountry: l.senderCountry,
-        role: "receiver",
-        lineScore: Math.max(1, l.lineScore),
-        health: l.health,
-        count: l.count,
-        total: l.total,
-        lastActivity: l.lastActivity,
-      });
-    }
-  }
-
-  // Merge declared lines that have no remittance history yet.
-  for (const d of declared) {
-    if (lines.some((l) => l.counterparty === d.counterparty)) continue;
-    lines.push({
+  // Only lines the user explicitly started — each enriched with the LineScore
+  // derived from real remittance history (if any has flowed yet).
+  const lines: LineView[] = declared.map((d) => {
+    // Computed FlowLine ids are directional: sender -> receiver.
+    const computedId =
+      d.role === "sender" ? `${a}->${d.counterparty}` : `${d.counterparty}->${a}`;
+    const fl = all.find((l) => l.id === computedId);
+    return {
       id: d.id,
       counterparty: d.counterparty,
-      counterpartyName: d.counterpartyName,
-      counterpartyCountry: d.counterpartyCountry,
+      counterpartyName: d.counterpartyName ?? (d.role === "sender" ? fl?.receiverName : fl?.senderName),
+      counterpartyCountry:
+        d.counterpartyCountry ?? (d.role === "sender" ? fl?.receiverCountry : fl?.senderCountry),
       role: d.role,
-      lineScore: 1,
-      health: "new",
-      count: 0,
-      total: 0,
-    });
-  }
+      lineScore: fl ? Math.max(1, fl.lineScore) : 1,
+      health: fl ? fl.health : "new",
+      count: fl?.count ?? 0,
+      total: fl?.total ?? 0,
+      lastActivity: fl?.lastActivity,
+    };
+  });
 
   lines.sort((x, y) => y.lineScore - x.lineScore);
   return NextResponse.json({ lines });
@@ -89,7 +64,7 @@ export async function GET(req: NextRequest) {
 
 /** Start a FlowLine with a counterparty (declares the relationship). */
 export async function POST(req: NextRequest) {
-  let b: { owner?: string; counterparty?: string };
+  let b: { owner?: string; counterparty?: string; role?: "sender" | "receiver" };
   try {
     b = await req.json();
   } catch {
@@ -106,8 +81,13 @@ export async function POST(req: NextRequest) {
     store.get<Profile>(profileKey(b.owner)),
     store.get<Profile>(profileKey(b.counterparty)),
   ]);
-  // Owner's side of the line: a receiver is paid by the counterparty; default sender.
-  const role = ownerP?.role === "receiver" ? "receiver" : "sender";
+  // Owner's chosen side of the line; fall back to their profile role.
+  const role: "sender" | "receiver" =
+    b.role === "sender" || b.role === "receiver"
+      ? b.role
+      : ownerP?.role === "receiver"
+        ? "receiver"
+        : "sender";
   const line = await createDeclaredLine({
     owner: b.owner,
     counterparty: b.counterparty,

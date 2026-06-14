@@ -1,7 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import type { Address, Hex } from "viem";
-import type { ScoringConfig } from "./scoring";
 
 // FlowPool lives on Base Sepolia (testnet). Address + testnet USDC are public;
 // the term-signer key is server-only (authorizes loan terms, never moves funds).
@@ -51,6 +50,7 @@ export const FLOWPOOL_ABI = [
   { type: "function", name: "sharePrice", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "totalShares", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "loanCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "feeBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint16" }] },
   { type: "function", name: "sharesOf", stateMutability: "view", inputs: [{ name: "", type: "address" }], outputs: [{ type: "uint256" }] },
   {
     type: "function", name: "loans", stateMutability: "view", inputs: [{ name: "", type: "uint256" }],
@@ -65,35 +65,6 @@ export const FLOWPOOL_ABI = [
     ],
   },
 ] as const;
-
-export type LoanTerms = {
-  collateralBps: number; // 5000–7500 (50–75%)
-  interestBps: number; // ~800–2000
-};
-
-/**
- * Collateral the SENDER must post, derived from their FlowScore and the
- * sender→receiver LineScore. Higher combined score → less collateral (down to
- * 50%); lower → up to 75%. `sensitivity` controls how sharply score moves it.
- */
-export function computeLoanTerms(
-  senderFlowScore: number,
-  lineScore: number,
-  config: ScoringConfig
-): LoanTerms {
-  const L = config.lending;
-  const flowShare = (L.scoreFlowShare ?? 60) / 100;
-  const combined = flowShare * senderFlowScore + (1 - flowShare) * lineScore; // 0–100
-  // Collateral interpolates max (low score) → min (high score).
-  const full = L.maxCollateralBps - (combined / 100) * (L.maxCollateralBps - L.minCollateralBps);
-  const mid = (L.minCollateralBps + L.maxCollateralBps) / 2; // when sensitivity neutralizes score
-  const sensitivity = (config.flowLine.sensitivity ?? 50) / 100;
-  const collateralBps = Math.round(mid + (full - mid) * sensitivity);
-  const interestBps = Math.round(
-    L.minInterestBps + (1 - combined / 100) * (L.maxInterestBps - L.minInterestBps)
-  );
-  return { collateralBps, interestBps };
-}
 
 export type LoanParams = {
   receiver: Address;

@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
   }
 
   const terms = await termsFor(body.sender, wallet.address, amount);
-  if (!terms.hasLine) {
+  if (!terms.eligible) {
     return NextResponse.json(
-      { error: "No FlowLine with that sender — they must have remitted to you." },
+      { error: terms.reason ?? "This FlowLine is not eligible for credit.", terms },
       { status: 400 }
     );
   }

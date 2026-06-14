@@ -8,6 +8,7 @@ export type Cadence = "once" | "weekly" | "monthly" | "custom";
 export type Schedule = {
   id: string;
   owner: string; // sender
+  walletId?: string; // Privy wallet id, for server-side auto-execution
   to: string; // recipient
   toName?: string;
   amount: number; // USDC
@@ -17,6 +18,7 @@ export type Schedule = {
   active: boolean;
   runs: number;
   last_run?: string;
+  last_error?: string;
   created_at: string;
 };
 
@@ -79,6 +81,53 @@ export async function updateSchedule(
   const next: Schedule = { ...s, ...patch, id: s.id, owner: s.owner };
   await store.set(key(id), next);
   return next;
+}
+
+/**
+ * Execute every due, active schedule for an owner: send the USDC from their
+ * embedded wallet (server-side), record it, and roll the schedule forward.
+ * Each due schedule is "claimed" (advanced) before sending so overlapping
+ * triggers can't double-send. Returns how many fired.
+ */
+export async function runDueSchedules(
+  owner: string,
+  deps: {
+    send: (walletId: string, to: string, amount: number) => Promise<string>;
+    record: (from: string, to: string, amount: string, hash: string) => Promise<void>;
+  }
+): Promise<{ processed: number; errors: number }> {
+  const now = Date.now();
+  const due = (await listSchedules(owner)).filter(
+    (s) => s.active && s.walletId && new Date(s.next_run).getTime() <= now
+  );
+  let processed = 0;
+  let errors = 0;
+  for (const s of due) {
+    const at = new Date();
+    // Claim: roll the schedule forward first so a concurrent run won't re-send.
+    const nextActive = s.cadence !== "once";
+    await updateSchedule(s.id, {
+      next_run:
+        s.cadence === "once" ? s.next_run : computeNextRun(at, s.cadence, s.intervalDays),
+      active: nextActive,
+      runs: s.runs + 1,
+      last_run: at.toISOString(),
+      last_error: undefined,
+    });
+    try {
+      const hash = await deps.send(s.walletId!, s.to, s.amount);
+      await deps.record(s.owner, s.to, s.amount.toFixed(2), hash);
+      processed += 1;
+    } catch (e) {
+      errors += 1;
+      // Roll back the run count and surface the error; leave inactive if one-time.
+      await updateSchedule(s.id, {
+        runs: s.runs,
+        last_error: e instanceof Error ? e.message : "send failed",
+      });
+    }
+  }
+  return { processed, errors };
 }
 
 export async function deleteSchedule(id: string): Promise<void> {

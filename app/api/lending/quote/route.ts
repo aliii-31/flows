@@ -40,9 +40,15 @@ export async function POST(req: NextRequest) {
   }
 
   const terms = await termsFor(request.sender, request.receiver, request.amount);
+  if (!terms.eligible) {
+    return NextResponse.json(
+      { error: terms.reason ?? "This request is no longer eligible.", terms },
+      { status: 400 }
+    );
+  }
   const principal = parseUnits(request.amount.toFixed(2), USDC_DECIMALS);
   const collateral = (principal * BigInt(terms.collateralBps)) / BigInt(10000);
-  const interest = (principal * BigInt(terms.interestBps)) / BigInt(10000);
+  const interest = parseUnits(terms.interest.toFixed(2), USDC_DECIMALS);
   const now = Math.floor(Date.now() / 1000);
   const durationDays = (await getScoringConfig()).lending.durationDays;
   const params = {

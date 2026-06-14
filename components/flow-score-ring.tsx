@@ -7,13 +7,14 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 type Props = {
   verified: boolean;
-  score?: number; // 0–100
+  score?: number;
   onVerify?: () => void;
 };
 
 export default function FlowScoreRing({ verified, score = 0, onVerify }: Props) {
-  // Keep a sliver of arc visible at score 0 so the rounded cap reads as a ring.
-  const progress = verified ? Math.max(score / 100, 0.02) : 0;
+  const normalized = Math.max(0, Math.min(1, (score - 300) / 550));
+  // Keep a sliver of arc visible at the floor so the rounded cap reads as a ring.
+  const progress = verified ? Math.max(normalized, 0.02) : 0;
 
   return (
     <div className="flex flex-col items-center gap-5">

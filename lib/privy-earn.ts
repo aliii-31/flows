@@ -5,7 +5,8 @@ import { generateAuthorizationSignature } from "@privy-io/server-auth/wallet-api
 // generated with the app's authorization key.
 const API_BASE = "https://api.privy.io";
 
-const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
+const appId =
+  process.env.PRIVY_APP_ID ?? process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 const appSecret = process.env.PRIVY_APP_SECRET ?? "";
 const authorizationPrivateKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
 

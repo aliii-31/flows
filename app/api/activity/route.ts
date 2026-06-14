@@ -1,29 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { getStore } from "@/lib/store";
-import { logEvent } from "@/lib/events";
-import type { Profile } from "../profile/route";
+import { recordTransfer, type Activity } from "@/lib/activity";
 
-export type Activity = {
-  direction: "sent" | "received";
-  counterparty: string; // the other wallet
-  counterparty_name?: string; // their Flows name, snapshotted at send time
-  counterparty_country?: string; // their ISO country code
-  amount: string; // human-readable USDC, e.g. "5.00"
-  hash: string; // tx hash
-  at: string; // ISO timestamp
-};
+export type { Activity };
 
 const activityKey = (address: string) => `activity:${address.toLowerCase()}`;
-const profileKey = (address: string) => `profile:${address.toLowerCase()}`;
-
-async function append(address: string, entry: Activity) {
-  const store = getStore();
-  const key = activityKey(address);
-  const existing = (await store.get<Activity[]>(key)) ?? [];
-  // Newest first, cap the list so it stays small.
-  await store.set(key, [entry, ...existing].slice(0, 50));
-}
 
 /** Recent activity for a wallet (newest first). */
 export async function GET(req: NextRequest) {
@@ -41,7 +23,7 @@ export async function GET(req: NextRequest) {
  * entry for the recipient, so money that arrives is visible on their screen.
  */
 export async function POST(req: NextRequest) {
-  let body: { from?: string; to?: string; amount?: string; hash?: string };
+  let body: { from?: string; to?: string; amount?: string; hash?: string; scheduled?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -54,52 +36,6 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-
-  // Snapshot each party's name/country so history reads cleanly later, even if
-  // a profile changes.
-  const store = getStore();
-  const [fromProfile, toProfile] = await Promise.all([
-    store.get<Profile>(profileKey(from)),
-    store.get<Profile>(profileKey(to)),
-  ]);
-
-  const at = new Date().toISOString();
-  await Promise.all([
-    append(from, {
-      direction: "sent",
-      counterparty: to,
-      counterparty_name: toProfile?.name,
-      counterparty_country: toProfile?.country,
-      amount,
-      hash,
-      at,
-    }),
-    append(to, {
-      direction: "received",
-      counterparty: from,
-      counterparty_name: fromProfile?.name,
-      counterparty_country: fromProfile?.country,
-      amount,
-      hash,
-      at,
-    }),
-  ]);
-
-  const usd = Number(amount);
-  await Promise.all([
-    logEvent({
-      type: "remittance.sent",
-      address: from,
-      amount_usd: usd,
-      payload: { to, to_name: toProfile?.name, to_country: toProfile?.country, hash },
-    }),
-    logEvent({
-      type: "remittance.received",
-      address: to,
-      amount_usd: usd,
-      payload: { from, from_name: fromProfile?.name, from_country: fromProfile?.country, hash },
-    }),
-  ]);
-
+  await recordTransfer(from, to, amount, hash, body.scheduled === true);
   return NextResponse.json({ ok: true });
 }

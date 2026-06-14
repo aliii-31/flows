@@ -28,7 +28,10 @@ const money = (n: number) =>
     : `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const short = (a?: string) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
 const scoreColor = (s: number) =>
+  s >= 740 ? ACCENT : s >= 580 ? "#c79a5e" : AXIS;
+const lineColor = (s: number) =>
   s >= 70 ? ACCENT : s >= 45 ? "#c79a5e" : AXIS;
+const pct = (bps: number) => `${(bps / 100).toFixed(1)}%`;
 
 const tooltipStyle = {
   background: "#1D1916",
@@ -38,11 +41,22 @@ const tooltipStyle = {
   fontSize: 12,
 };
 
-const FS_KEYS: (keyof ScoringConfig["flowScore"])[] = [
+type FlowScoreWeightKey = "flowlines" | "liquidity" | "repayment" | "integrity" | "trading";
+type FlowLineWeightKey =
+  | "amount"
+  | "repeats"
+  | "cadence"
+  | "recency"
+  | "scheduled"
+  | "longevity"
+  | "growth";
+type LendingNumberKey = keyof ScoringConfig["lending"];
+
+const FS_KEYS: FlowScoreWeightKey[] = [
   "flowlines", "liquidity", "repayment", "integrity", "trading",
 ];
-const FL_KEYS: (keyof ScoringConfig["flowLine"])[] = [
-  "consistency", "longevity", "volume", "growth",
+const FL_KEYS: FlowLineWeightKey[] = [
+  "amount", "repeats", "cadence", "recency", "scheduled", "longevity", "growth",
 ];
 
 // Plain-language explainers surfaced via the (i) tooltips.
@@ -54,21 +68,37 @@ const FS_INFO: Record<string, string> = {
   trading: "Weight of hold/swap activity in the wallet.",
 };
 const FL_INFO: Record<string, string> = {
-  consistency: "How regular the remittance cadence is — same amount on a steady interval.",
+  amount: "How much qualified remittance value has flowed across this sender to receiver line.",
+  repeats: "Whether the line has enough repeated qualifying remittances.",
+  cadence: "How regular the remittance cadence is.",
+  recency: "How recently money flowed on the line.",
+  scheduled: "How often payments are executed through scheduled flows.",
   longevity: "How many months the sender → receiver relationship has been active.",
-  volume: "Total value received over the life of the relationship.",
   growth: "Whether remittances are trending up over time.",
 };
 const LENDING_INFO: Record<string, string> = {
-  minCollateralBps: "Collateral the sender posts at the top combined score (safest borrowers).",
-  maxCollateralBps: "Collateral the sender posts at the bottom score (riskiest borrowers).",
-  scoreFlowShare: "How much the sender's FlowScore — vs the FlowLine LineScore — drives the combined score.",
-  minInterestBps: "Annualized interest at the top combined score.",
-  maxInterestBps: "Annualized interest at the bottom combined score.",
+  minCollateralBps: "Best-case sender collateral. 50% means the receiver borrows 100% and sender posts half.",
+  maxCollateralBps: "Worst eligible sender collateral before score floors block the request.",
+  minInterestBps: "Annualized APR for the strongest eligible risk score.",
+  maxInterestBps: "Annualized APR for the weakest eligible risk score.",
   durationDays: "Default loan term — repayment due, and liquidation allowed, after this.",
+  receiverScoreWeight: "How much the receiver's FlowScore contributes to underwriting.",
+  senderScoreWeight: "How much the sender's FlowScore contributes to underwriting.",
+  lineScoreWeight: "How much the relationship LineScore contributes to underwriting.",
+  minReceiverScore: "Minimum receiver FlowScore required to request credit.",
+  minSenderScore: "Minimum sender FlowScore required to back credit.",
+  minLineScore: "Minimum sender to receiver LineScore required for credit.",
+  utilizationKinkBps: "Pool utilization where APR begins adding a liquidity premium.",
+  utilizationPremiumBps: "Maximum extra APR added as utilization moves from kink to 100%.",
+  protocolFeeBps: "Protocol share of loan interest before LP yield.",
+  expectedLossBaseBps: "Expected default probability at top risk scores.",
+  expectedLossRiskBps: "Expected default probability at low eligible risk scores.",
+  maxPrincipalLineMultiple: "Max request as a multiple of lifetime qualified line volume.",
+  maxPrincipalMonthlyMultiple: "Max request as a multiple of recent monthly line volume.",
+  modelRiskScore: "Risk score used for projected LP APR when no specific loan is being tested.",
 };
 const STAT_INFO: Record<string, string> = {
-  "Avg FlowScore": "Mean FlowScore across all users (0–100), recomputed from the live scoring weights.",
+  "Avg FlowScore": "Mean FlowScore across all users (300-850), recomputed from live weights.",
   "FlowLines": "Distinct sender → receiver remittance relationships tracked.",
   "Verified": "Share of users with a completed World ID proof of human.",
   "Remittance vol": "Total value moved through person-to-person remittances.",
@@ -124,6 +154,28 @@ type PoolStats = {
   feesCollected?: number;
   loanCount?: number;
   utilization?: number;
+  utilizationBps?: number;
+  feeBps?: number;
+  borrowerAprBps?: number;
+  projectedLpAprBps?: number;
+  expectedLossBps?: number;
+  probabilityOfDefaultBps?: number;
+  modelRiskScore?: number;
+};
+
+type PreviewTerms = {
+  eligible: boolean;
+  reason?: string;
+  receiverScore: number;
+  senderScore: number;
+  lineScore: number;
+  riskScore: number;
+  collateralBps: number;
+  undercollateralizedPct: number;
+  aprBps: number;
+  interest: number;
+  maxEligiblePrincipal: number;
+  projectedLpAprBps: number;
 };
 
 const TABS = [
@@ -142,6 +194,11 @@ export default function Admin() {
   const [pool, setPool] = useState<PoolStats | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("overview");
+  const [previewSender, setPreviewSender] = useState("");
+  const [previewReceiver, setPreviewReceiver] = useState("");
+  const [previewAmount, setPreviewAmount] = useState("20");
+  const [previewTerms, setPreviewTerms] = useState<PreviewTerms | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/admin");
@@ -201,6 +258,30 @@ export default function Admin() {
       setBusy(null);
     }
   }, [config, load]);
+
+  const preview = useCallback(async () => {
+    setBusy("preview");
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/lending/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender: previewSender,
+          receiver: previewReceiver,
+          amount: Number(previewAmount),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Preview failed");
+      setPreviewTerms(data.terms as PreviewTerms);
+    } catch (e) {
+      setPreviewTerms(null);
+      setPreviewError(e instanceof Error ? e.message : "Preview failed");
+    } finally {
+      setBusy(null);
+    }
+  }, [previewAmount, previewReceiver, previewSender]);
 
   if (!data || !config) {
     return (
@@ -401,7 +482,7 @@ export default function Admin() {
                         <span className="text-ink-soft text-xs"> · {l.senderCountry}→{l.receiverCountry}</span>
                       ) : null}
                     </td>
-                    <td className="py-2 pr-3 text-right font-medium tabular-nums" style={{ color: scoreColor(l.lineScore) }}>
+                    <td className="py-2 pr-3 text-right font-medium tabular-nums" style={{ color: lineColor(l.lineScore) }}>
                       {l.lineScore}
                     </td>
                     <td className="py-2 pr-3 text-xs" style={{ color: healthColor(l.health) }}>{l.health}</td>
@@ -466,35 +547,94 @@ export default function Admin() {
 
       {/* ───────── Lending ───────── */}
       {tab === "lending" && (
-        <Panel
-          title="Lending pool (Base Sepolia)"
-          info="Live state of the FlowPool contract on Base Sepolia. LPs deposit USDC; receivers borrow against sender-posted collateral."
-        >
-          {!pool?.configured ? (
-            <p className="text-ink-soft text-sm">
-              Pool not deployed yet — set <code className="text-ink">NEXT_PUBLIC_FLOWPOOL_ADDRESS</code> after deploying the contract.
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-              {[
-                { label: "TVL", value: money(pool.tvl ?? 0), info: "Total pool assets: available liquidity + outstanding principal." },
-                { label: "Available", value: money(pool.liquidity ?? 0), info: "USDC ready to lend right now." },
-                { label: "Lent out", value: money(pool.outstandingPrincipal ?? 0), info: "Principal currently in active loans." },
-                { label: "Collateral", value: money(pool.collateralHeld ?? 0), info: "Sender collateral locked against active loans." },
-                { label: "Utilization", value: `${pool.utilization ?? 0}%`, info: "Share of assets currently lent out." },
-                { label: "Fees", value: money(pool.feesCollected ?? 0), info: "Protocol fees accrued from loan interest." },
-              ].map((s) => (
-                <div key={s.label}>
-                  <p className="eyebrow flex items-center">
-                    {s.label}
-                    <Info text={s.info} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel
+            title="Lending pool (Base Sepolia)"
+            info="Live state plus projected LP APR from utilization, borrower APR, fee, and expected loss."
+          >
+            {!pool?.configured ? (
+              <p className="text-ink-soft text-sm">
+                Pool not deployed yet — set <code className="text-ink">NEXT_PUBLIC_FLOWPOOL_ADDRESS</code> after deploying the contract.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                {[
+                  { label: "TVL", value: money(pool.tvl ?? 0), info: "Total pool assets: available liquidity + outstanding principal." },
+                  { label: "Available", value: money(pool.liquidity ?? 0), info: "USDC ready to lend right now." },
+                  { label: "Utilization", value: `${pool.utilization ?? 0}%`, info: "Share of assets currently lent out." },
+                  { label: "Proj. LP APR", value: pct(pool.projectedLpAprBps ?? 0), info: "Projected LP return after protocol fee and expected loss." },
+                  { label: "Borrower APR", value: pct(pool.borrowerAprBps ?? 0), info: "Model borrower APR at the configured model risk score." },
+                  { label: "Expected loss", value: pct(pool.expectedLossBps ?? 0), info: "Projected annualized loss from uncovered principal and default probability." },
+                  { label: "Collateral", value: money(pool.collateralHeld ?? 0), info: "Sender collateral locked against active loans." },
+                  { label: "Fees", value: money(pool.feesCollected ?? 0), info: "Protocol fees accrued from loan interest." },
+                  { label: "Protocol fee", value: pct(pool.feeBps ?? config.lending.protocolFeeBps), info: "Protocol share of interest before LP yield." },
+                ].map((s) => (
+                  <div key={s.label}>
+                    <p className="eyebrow flex items-center">
+                      {s.label}
+                      <Info text={s.info} />
+                    </p>
+                    <p className="mt-1 text-base font-semibold tabular-nums">{s.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+
+          <Panel
+            title="Test terms"
+            info="Preview eligibility, collateral, APR, and LP impact for a receiver-sender pair."
+          >
+            <div className="flex flex-col gap-3">
+              <input
+                value={previewReceiver}
+                onChange={(e) => setPreviewReceiver(e.target.value.trim())}
+                placeholder="Receiver address"
+                className="rounded-lg border border-line bg-ground px-3 py-2 text-sm text-ink focus:outline-none"
+              />
+              <input
+                value={previewSender}
+                onChange={(e) => setPreviewSender(e.target.value.trim())}
+                placeholder="Sender address"
+                className="rounded-lg border border-line bg-ground px-3 py-2 text-sm text-ink focus:outline-none"
+              />
+              <input
+                value={previewAmount}
+                onChange={(e) => setPreviewAmount(e.target.value)}
+                type="number"
+                inputMode="decimal"
+                placeholder="Amount"
+                className="rounded-lg border border-line bg-ground px-3 py-2 text-sm text-ink focus:outline-none"
+              />
+              <button
+                onClick={preview}
+                disabled={busy !== null}
+                className="bg-ink text-ground rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-50"
+              >
+                {busy === "preview" ? "Previewing…" : "Preview terms"}
+              </button>
+              {previewError && <p className="text-xs text-red-400">{previewError}</p>}
+              {previewTerms && (
+                <div className="rounded-xl border border-line bg-ground p-3 text-xs">
+                  <p className={previewTerms.eligible ? "text-accent" : "text-red-400"}>
+                    {previewTerms.eligible ? "Eligible" : previewTerms.reason ?? "Blocked"}
                   </p>
-                  <p className="mt-1 text-base font-semibold tabular-nums">{s.value}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <span>Receiver {previewTerms.receiverScore}</span>
+                    <span>Sender {previewTerms.senderScore}</span>
+                    <span>Line {previewTerms.lineScore}</span>
+                    <span>Risk {previewTerms.riskScore}/100</span>
+                    <span>Collateral {pct(previewTerms.collateralBps)}</span>
+                    <span>APR {pct(previewTerms.aprBps)}</span>
+                    <span>Interest {money(previewTerms.interest)}</span>
+                    <span>Max {money(previewTerms.maxEligiblePrincipal)}</span>
+                    <span>LP APR {pct(previewTerms.projectedLpAprBps)}</span>
+                  </div>
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </Panel>
+          </Panel>
+        </div>
       )}
 
       {/* ───────── Scoring ───────── */}
@@ -512,7 +652,7 @@ export default function Admin() {
             <div>
               <p className="eyebrow mb-2 flex items-center">
                 FlowScore
-                <Info text="A user's overall reputation (0–100), built from these weighted signals." />
+                <Info text="A user's FICO-style reputation (300-850), built from these weighted signals." />
               </p>
               <div className="flex flex-col gap-2">
                 {FS_KEYS.map((k) => (
@@ -528,6 +668,49 @@ export default function Admin() {
                         setConfig({ ...config, flowScore: { ...config.flowScore, [k]: Number(e.target.value) } })
                       }
                       className="w-20 rounded-lg border border-line bg-ground px-3 py-1.5 text-right text-sm tabular-nums focus:outline-none"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {([
+                  ["Scale min", "min"],
+                  ["Scale max", "max"],
+                ] as const).map(([label, key]) => (
+                  <label key={key} className="flex items-center justify-between gap-3">
+                    <span className="text-sm">{label}</span>
+                    <input
+                      type="number"
+                      value={config.flowScore.scale[key]}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          flowScore: {
+                            ...config.flowScore,
+                            scale: { ...config.flowScore.scale, [key]: Number(e.target.value) },
+                          },
+                        })
+                      }
+                      className="w-24 rounded-lg border border-line bg-ground px-3 py-1.5 text-right text-sm tabular-nums focus:outline-none"
+                    />
+                  </label>
+                ))}
+                {([
+                  ["Delinq. hit", "delinquencyPenalty"],
+                  ["Default hit", "defaultPenalty"],
+                ] as const).map(([label, key]) => (
+                  <label key={key} className="flex items-center justify-between gap-3">
+                    <span className="text-sm">{label}</span>
+                    <input
+                      type="number"
+                      value={config.flowScore[key]}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          flowScore: { ...config.flowScore, [key]: Number(e.target.value) },
+                        })
+                      }
+                      className="w-24 rounded-lg border border-line bg-ground px-3 py-1.5 text-right text-sm tabular-nums focus:outline-none"
                     />
                   </label>
                 ))}
@@ -579,6 +762,30 @@ export default function Admin() {
               Higher = recent behavior dominates (a missed remittance drops the line
               faster) and the lending collateral band swings more sharply with score.
             </p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              {([
+                ["Min remittance $", "minQualifiedRemittanceUsd", 1],
+                ["Min repeat txns", "minQualifiedPaymentCount", 1],
+                ["Target volume $", "targetVolumeUsd", 1],
+                ["Freshness days", "targetRecencyDays", 1],
+                ["Longevity days", "targetLongevityDays", 1],
+              ] as const).map(([label, key, scale]) => (
+                <label key={key} className="flex items-center justify-between gap-3">
+                  <span className="text-sm">{label}</span>
+                  <input
+                    type="number"
+                    value={config.flowLine[key] / scale}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        flowLine: { ...config.flowLine, [key]: Number(e.target.value) * scale },
+                      })
+                    }
+                    className="w-24 rounded-lg border border-line bg-ground px-3 py-1.5 text-right text-sm tabular-nums focus:outline-none"
+                  />
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Lending policy — score → collateral/interest curve */}
@@ -593,13 +800,26 @@ export default function Admin() {
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
               {([
-                ["Min collateral %", "minCollateralBps", 100],
-                ["Max collateral %", "maxCollateralBps", 100],
-                ["FlowScore weight %", "scoreFlowShare", 1],
-                ["Min interest %", "minInterestBps", 100],
-                ["Max interest %", "maxInterestBps", 100],
+                ["Best collateral %", "minCollateralBps", 100],
+                ["Worst collateral %", "maxCollateralBps", 100],
+                ["Min APR %", "minInterestBps", 100],
+                ["Max APR %", "maxInterestBps", 100],
+                ["Receiver weight %", "receiverScoreWeight", 1],
+                ["Sender weight %", "senderScoreWeight", 1],
+                ["LineScore weight %", "lineScoreWeight", 1],
+                ["Receiver floor", "minReceiverScore", 1],
+                ["Sender floor", "minSenderScore", 1],
+                ["Line floor", "minLineScore", 1],
+                ["Utilization kink %", "utilizationKinkBps", 100],
+                ["Utilization premium %", "utilizationPremiumBps", 100],
+                ["Protocol fee %", "protocolFeeBps", 100],
+                ["Best PD %", "expectedLossBaseBps", 100],
+                ["Weak PD %", "expectedLossRiskBps", 100],
+                ["Line cap multiple", "maxPrincipalLineMultiple", 1],
+                ["Monthly cap multiple", "maxPrincipalMonthlyMultiple", 1],
+                ["Model risk score", "modelRiskScore", 1],
                 ["Loan duration (days)", "durationDays", 1],
-              ] as const).map(([label, key, scale]) => (
+              ] as Array<[string, LendingNumberKey, number]>).map(([label, key, scale]) => (
                 <label key={key} className="flex items-center justify-between gap-3">
                   <span className="flex items-center text-sm">
                     {label}

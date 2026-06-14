@@ -1,8 +1,12 @@
 import type { StoredEvent } from "./events";
-import type { ScoringConfig } from "./scoring";
+import {
+  flowScoreBand,
+  flowScoreFromRaw,
+  type FlowScoreBand,
+  type ScoringConfig,
+} from "./scoring";
 import { computeFlowLines, type FlowLine } from "./flowline";
 
-// Maps event types to product domains for volume breakdowns.
 const DOMAIN: Record<string, string> = {
   "remittance.sent": "Remittances",
   "remittance.received": "Remittances",
@@ -11,6 +15,10 @@ const DOMAIN: Record<string, string> = {
   "lock.created": "Grow",
   "card.order": "Cards",
   "swap.executed": "Hold",
+  "loan.funded": "Lending",
+  "loan.repaid": "Lending",
+  "loan.delinquent": "Lending",
+  "loan.defaulted": "Lending",
 };
 
 export type UserRow = {
@@ -19,7 +27,9 @@ export type UserRow = {
   country?: string;
   role?: string;
   verified: boolean;
+  rawFlowScore: number;
   flowScore: number;
+  flowBand: FlowScoreBand;
   received: number;
   sent: number;
   saved: number;
@@ -48,6 +58,7 @@ export type Analytics = {
   flowLines: FlowLine[];
 };
 
+const DAY = 86_400_000;
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const clamp = (x: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -67,7 +78,6 @@ export function computeAnalytics(
   events: StoredEvent[],
   config: ScoringConfig
 ): Analytics {
-  // Per-user identity maps.
   const country = new Map<string, string>();
   const role = new Map<string, string>();
   const name = new Map<string, string>();
@@ -86,7 +96,6 @@ export function computeAnalytics(
     if (e.type === "identity.verified") verified.add(a);
   }
 
-  // Group events by user.
   const byUser = new Map<string, StoredEvent[]>();
   for (const e of events) {
     const a = e.address?.toLowerCase();
@@ -94,8 +103,15 @@ export function computeAnalytics(
     (byUser.get(a) ?? byUser.set(a, []).get(a)!).push(e);
   }
 
+  const flowLines = computeFlowLines(events, config);
+  const linesByReceiver = new Map<string, FlowLine[]>();
+  for (const line of flowLines) {
+    const lines = linesByReceiver.get(line.receiver) ?? [];
+    lines.push(line);
+    linesByReceiver.set(line.receiver, lines);
+  }
+
   const users: UserRow[] = [];
-  let totalFlowLines = 0;
 
   for (const [address, evs] of byUser) {
     const received = evs.filter((e) => e.type === "remittance.received");
@@ -106,43 +122,66 @@ export function computeAnalytics(
       .filter((e) => e.type === "grow.deposit" || e.type === "lock.created")
       .reduce((s, e) => s + num(e.amount_usd), 0);
     const swaps = evs.filter((e) => e.type === "swap.executed");
+    const repaidLoans = evs.filter((e) => e.type === "loan.repaid");
+    const delinquentLoans = evs.filter((e) => e.type === "loan.delinquent");
+    const defaultedLoans = evs.filter(
+      (e) => e.type === "loan.defaulted" && e.payload?.role !== "sender"
+    );
+    const senderDefaultedLoans = evs.filter(
+      (e) => e.type === "loan.defaulted" && e.payload?.role === "sender"
+    );
+    const repaidTotal = repaidLoans.reduce((s, e) => s + num(e.amount_usd), 0);
+    const defaultedTotal = defaultedLoans.reduce((s, e) => s + num(e.amount_usd), 0);
 
-    // FlowLines: recurring inflows grouped by counterparty.
-    const lines = new Map<string, { count: number; total: number; dates: number[]; country?: string; name?: string }>();
-    for (const e of received) {
-      const cp = str(e.payload?.from) ?? "unknown";
-      const l = lines.get(cp) ?? { count: 0, total: 0, dates: [], country: str(e.payload?.from_country), name: str(e.payload?.from_name) };
-      l.count += 1;
-      l.total += num(e.amount_usd);
-      l.dates.push(new Date(e.created_at).getTime());
-      lines.set(cp, l);
-    }
-    const recurringLines = [...lines.values()].filter((l) => l.count >= 2).length;
-    totalFlowLines += recurringLines;
+    const userLines = linesByReceiver.get(address) ?? [];
+    const qualifiedLines = userLines.filter((line) => line.qualified);
+    const avgLineScore = qualifiedLines.length
+      ? qualifiedLines.reduce((sum, line) => sum + line.lineScore, 0) / qualifiedLines.length
+      : 0;
 
-    // Signals (0–100).
     const longevityDays = received.length
       ? (Math.max(...received.map((e) => new Date(e.created_at).getTime())) -
           Math.min(...received.map((e) => new Date(e.created_at).getTime()))) /
-        86_400_000
+        DAY
       : 0;
     const flowlines = clamp(
-      (0.3 * Math.min(received.length / 8, 1) +
-        0.25 * Math.min(recurringLines / 2, 1) +
-        0.25 * Math.min(receivedTotal / 2000, 1) +
-        0.2 * Math.min(longevityDays / 90, 1)) *
-        100
+      0.35 * avgLineScore +
+        0.25 * Math.min(qualifiedLines.length / 2, 1) * 100 +
+        0.2 * Math.min(receivedTotal / 2000, 1) * 100 +
+        0.2 * Math.min(longevityDays / 90, 1) * 100
     );
     const savingsRate = receivedTotal > 0 ? saved / receivedTotal : saved > 0 ? 0.5 : 0;
     const liquidity = clamp(savingsRate * 100);
-    const repayment = 50; // neutral until a credit layer exists
+    const repayment =
+      repaidLoans.length || delinquentLoans.length || defaultedLoans.length
+        ? clamp(
+            50 +
+              Math.min(repaidLoans.length, 4) * 10 +
+              Math.min(repaidTotal / 1000, 1) * 15 -
+              Math.min(delinquentLoans.length, 4) * 8 -
+              Math.min(defaultedLoans.length, 4) * 20 -
+              Math.min(senderDefaultedLoans.length, 4) * 8 -
+              Math.min(defaultedTotal / 1000, 1) * 25
+          )
+        : 50;
     const integrity = verified.has(address) ? 100 : 35;
     const trading = clamp(swaps.length * 15);
-
-    const flowScore = weighted(
+    const rawFlowScore = weighted(
       { flowlines, liquidity, repayment, integrity, trading },
-      config.flowScore
+      {
+        flowlines: config.flowScore.flowlines,
+        liquidity: config.flowScore.liquidity,
+        repayment: config.flowScore.repayment,
+        integrity: config.flowScore.integrity,
+        trading: config.flowScore.trading,
+      }
     );
+    const visibleBase = flowScoreFromRaw(rawFlowScore, config);
+    const penalty =
+      delinquentLoans.length * config.flowScore.delinquencyPenalty +
+      defaultedLoans.length * config.flowScore.defaultPenalty +
+      Math.round(senderDefaultedLoans.length * config.flowScore.defaultPenalty * 0.4);
+    const flowScore = Math.max(config.flowScore.scale.min, visibleBase - penalty);
 
     const lastActive = evs
       .map((e) => e.created_at)
@@ -155,19 +194,20 @@ export function computeAnalytics(
       country: country.get(address),
       role: role.get(address),
       verified: verified.has(address),
+      rawFlowScore,
       flowScore,
+      flowBand: flowScoreBand(flowScore, config),
       received: receivedTotal,
       sent: sentTotal,
       saved,
       swaps: swaps.length,
-      flowLines: recurringLines,
+      flowLines: qualifiedLines.length,
       lastActive,
     });
   }
 
   users.sort((a, b) => b.flowScore - a.flowScore);
 
-  // Timeseries by day.
   const tsMap = new Map<string, { volume: number; events: number }>();
   for (const e of events) {
     const d = e.created_at.slice(0, 10);
@@ -180,14 +220,12 @@ export function computeAnalytics(
     .map(([date, v]) => ({ date, ...v }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // By type.
   const typeMap = new Map<string, number>();
   for (const e of events) typeMap.set(e.type, (typeMap.get(e.type) ?? 0) + 1);
   const byType = [...typeMap.entries()]
     .map(([type, count]) => ({ type, count }))
     .sort((a, b) => b.count - a.count);
 
-  // By domain volume.
   const domMap = new Map<string, number>();
   for (const e of events) {
     const dom = DOMAIN[e.type];
@@ -195,7 +233,6 @@ export function computeAnalytics(
   }
   const byDomain = [...domMap.entries()].map(([domain, volume]) => ({ domain, volume }));
 
-  // By country (receiver country, received volume).
   const cMap = new Map<string, { volume: number; users: Set<string> }>();
   for (const e of events) {
     if (e.type !== "remittance.received") continue;
@@ -211,7 +248,6 @@ export function computeAnalytics(
     .map(([country, v]) => ({ country, volume: v.volume, users: v.users.size }))
     .sort((a, b) => b.volume - a.volume);
 
-  // Corridors (from_country → receiver country).
   const corMap = new Map<string, { volume: number; count: number }>();
   for (const e of events) {
     if (e.type !== "remittance.received") continue;
@@ -219,7 +255,7 @@ export function computeAnalytics(
     const from = str(e.payload?.from_country);
     const to = a ? country.get(a) : undefined;
     if (!from || !to) continue;
-    const key = `${from} → ${to}`;
+    const key = `${from} -> ${to}`;
     const cur = corMap.get(key) ?? { volume: 0, count: 0 };
     cur.volume += num(e.amount_usd);
     cur.count += 1;
@@ -230,13 +266,21 @@ export function computeAnalytics(
     .sort((a, b) => b.volume - a.volume)
     .slice(0, 10);
 
-  // Score distribution.
-  const buckets = ["0–20", "21–40", "41–60", "61–80", "81–100"];
-  const dist = buckets.map((bucket) => ({ bucket, count: 0 }));
-  for (const u of users) {
-    const i = Math.min(Math.floor(u.flowScore / 20), 4);
-    dist[i].count += 1;
-  }
+  const scoreDistribution = [
+    { bucket: "Poor", count: 0 },
+    { bucket: "Fair", count: 0 },
+    { bucket: "Good", count: 0 },
+    { bucket: "Very Good", count: 0 },
+    { bucket: "Excellent", count: 0 },
+  ];
+  const bucketIndex: Record<FlowScoreBand, number> = {
+    Poor: 0,
+    Fair: 1,
+    Good: 2,
+    "Very Good": 3,
+    Excellent: 4,
+  };
+  for (const u of users) scoreDistribution[bucketIndex[u.flowBand]].count += 1;
 
   const totalVolume = events.reduce((s, e) => s + num(e.amount_usd), 0);
   const remittanceVolume = events
@@ -254,15 +298,15 @@ export function computeAnalytics(
       remittanceVolume,
       avgFlowScore,
       totalEvents: events.length,
-      flowLines: totalFlowLines,
+      flowLines: flowLines.filter((line) => line.qualified).length,
     },
     timeseries,
     byType,
     byDomain,
     byCountry,
     corridors,
-    scoreDistribution: dist,
+    scoreDistribution,
     users,
-    flowLines: computeFlowLines(events, config),
+    flowLines,
   };
 }

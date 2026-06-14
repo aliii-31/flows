@@ -12,7 +12,7 @@ import ReceiveSheet from "@/components/receive-sheet";
 import ActivityList from "@/components/activity-list";
 import { useRamp } from "@/components/use-ramp";
 import ScheduledList from "@/components/scheduled-list";
-import FlowLinesModal from "@/components/flowlines-modal";
+import FlowLinesSection from "@/components/flowlines-section";
 
 function greeting() {
   const h = new Date().getHours();
@@ -27,9 +27,9 @@ export default function Home() {
   const address = user?.wallet?.address;
 
   const [verified, setVerified] = useState(false);
+  const [flowScore, setFlowScore] = useState(0);
   const [name, setName] = useState<string | null>(null);
   const [openSheet, setOpenSheet] = useState<"send" | "receive" | "schedule" | null>(null);
-  const [flowlinesOpen, setFlowlinesOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [profileReady, setProfileReady] = useState(false);
   const { open: openRamp, busy: rampBusy } = useRamp(() => setRefresh((n) => n + 1));
@@ -60,6 +60,45 @@ export default function Home() {
       .then((data) => setVerified(!!data.verified))
       .catch(() => {});
   }, [address]);
+
+  // Auto-run due scheduled payments (server-side) on load and on an interval.
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    const run = () =>
+      fetch("/api/schedules/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!cancelled && d?.processed > 0) setRefresh((n) => n + 1);
+        })
+        .catch(() => {});
+    run();
+    const t = setInterval(run, 120_000); // every 2 min while the app is open
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [address]);
+
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    fetch(`/api/score?address=${address}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setFlowScore(Number(data.flowScore) || 0);
+      })
+      .catch(() => {
+        if (!cancelled) setFlowScore(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address, refresh]);
 
 
   if (!ready || !authenticated || !profileReady) {
@@ -160,22 +199,16 @@ export default function Home() {
                   </div>
                 </div>
               </section>
+              <FlowLinesSection address={address} reloadSignal={refresh} />
             </div>
 
             <div className="flex flex-col gap-4">
               <section className="card flex flex-col items-center gap-5 p-6">
-                <div className="flex w-full items-center justify-between">
-                  <p className="eyebrow">FlowScore</p>
-                  <button
-                    onClick={() => setFlowlinesOpen(true)}
-                    className="text-ink-soft text-xs transition-colors hover:text-accent"
-                  >
-                    FlowLines →
-                  </button>
-                </div>
+                <p className="eyebrow self-start">FlowScore</p>
                 <WorldIdVerify
                   address={address}
                   verified={verified}
+                  score={flowScore}
                   onVerified={() => setVerified(true)}
                 />
               </section>
@@ -200,11 +233,6 @@ export default function Home() {
       <ReceiveSheet
         open={openSheet === "receive"}
         onClose={() => setOpenSheet(null)}
-        address={address}
-      />
-      <FlowLinesModal
-        open={flowlinesOpen}
-        onClose={() => setFlowlinesOpen(false)}
         address={address}
       />
     </div>

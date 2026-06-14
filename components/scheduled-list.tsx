@@ -1,19 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useSendTransaction } from "@privy-io/react-auth";
-import { encodeFunctionData, erc20Abi, parseUnits } from "viem";
-import { defaultChain } from "@/lib/chains";
-import { getUsdcAddress, USDC_DECIMALS } from "@/lib/usdc";
 import type { Schedule } from "@/lib/schedules";
-
-// Inlined so this client component doesn't pull the Node-only store module in.
-const DAY = 86_400_000;
-function computeNextRun(from: Date, c: Schedule["cadence"], custom?: number): string {
-  const days =
-    c === "weekly" ? 7 : c === "monthly" ? 30 : c === "custom" ? Math.max(1, custom ?? 30) : 0;
-  return new Date(from.getTime() + days * DAY).toISOString();
-}
 
 const cadenceLabel = (s: Schedule) =>
   s.cadence === "once"
@@ -37,10 +25,8 @@ export default function ScheduledList({
   reloadSignal?: number;
   onChange?: () => void;
 }) {
-  const { sendTransaction } = useSendTransaction();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [draftAmount, setDraftAmount] = useState("");
   const [draftDate, setDraftDate] = useState("");
@@ -81,49 +67,10 @@ export default function ScheduledList({
     [load, onChange]
   );
 
-  const runNow = useCallback(
-    async (s: Schedule) => {
-      const usdc = getUsdcAddress();
-      if (!usdc || !address) return;
-      setBusy(s.id);
-      setError(null);
-      try {
-        const { hash } = await sendTransaction({
-          to: usdc,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "transfer",
-            args: [s.to as `0x${string}`, parseUnits(String(s.amount), USDC_DECIMALS)],
-          }),
-          chainId: defaultChain.id,
-        });
-        fetch("/api/activity", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from: address, to: s.to, amount: s.amount.toFixed(2), hash }),
-        }).catch(() => {});
-        const at = new Date();
-        await patch(s.id, {
-          runs: s.runs + 1,
-          last_run: at.toISOString(),
-          active: s.cadence !== "once",
-          next_run:
-            s.cadence === "once" ? s.next_run : computeNextRun(at, s.cadence, s.intervalDays),
-        });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Payment failed");
-      } finally {
-        setBusy(null);
-      }
-    },
-    [address, sendTransaction, patch]
-  );
-
   const startEdit = (s: Schedule) => {
     setEditId(s.id);
     setDraftAmount(String(s.amount));
     setDraftDate(s.next_run.slice(0, 10));
-    setError(null);
   };
 
   const saveEdit = async (id: string) => {
@@ -150,12 +97,10 @@ export default function ScheduledList({
         )}
       </div>
 
-      {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
-
       {schedules.length === 0 ? (
         <p className="text-ink-soft text-sm">
           None yet. Tap <span className="text-ink">Schedule</span> to set up a recurring or
-          future payment.
+          future payment — it sends automatically.
         </p>
       ) : (
         <div className="flex flex-col gap-3">
@@ -163,7 +108,7 @@ export default function ScheduledList({
             <div
               key={s.id}
               className={`rounded-xl border p-3.5 ${
-                isDue(s) ? "border-accent/40 bg-accent/5" : "border-line bg-ground"
+                isDue(s) && s.active ? "border-accent/40 bg-accent/5" : "border-line bg-ground"
               }`}
             >
               <div className="flex items-start justify-between gap-3">
@@ -216,22 +161,18 @@ export default function ScheduledList({
               ) : (
                 <>
                   <p className="text-ink-soft mt-2 text-xs">
-                    {isDue(s) ? (
-                      <span className="text-accent font-medium">Due now</span>
+                    {!s.active ? (
+                      "Paused"
+                    ) : isDue(s) ? (
+                      <span className="text-accent font-medium">Sending automatically…</span>
                     ) : (
-                      <>Next: {fmtDate(s.next_run)}</>
+                      <>Auto-sends {fmtDate(s.next_run)}</>
                     )}
                   </p>
+                  {s.last_error && (
+                    <p className="mt-1 text-xs text-red-400">Last run failed: {s.last_error}</p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {isDue(s) && (
-                      <button
-                        onClick={() => runNow(s)}
-                        disabled={busy === s.id}
-                        className="bg-ink text-ground rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-                      >
-                        {busy === s.id ? "Sending…" : "Send now"}
-                      </button>
-                    )}
                     <button
                       onClick={() => startEdit(s)}
                       className="text-ink-soft rounded-lg border border-line px-3 py-1.5 text-xs hover:text-ink"

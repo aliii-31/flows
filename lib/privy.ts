@@ -1,7 +1,7 @@
 import { PrivyClient } from "@privy-io/server-auth";
 import { getAddress, isAddress } from "viem";
 
-const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+const appId = process.env.PRIVY_APP_ID ?? process.env.NEXT_PUBLIC_PRIVY_APP_ID;
 const appSecret = process.env.PRIVY_APP_SECRET;
 const authorizationPrivateKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
 
@@ -11,7 +11,7 @@ let _privy: PrivyClient | null = null;
 export function getPrivy(): PrivyClient {
   if (!appId || !appSecret) {
     throw new Error(
-      "Privy server is not configured (need NEXT_PUBLIC_PRIVY_APP_ID + PRIVY_APP_SECRET)."
+      "Privy server is not configured (need PRIVY_APP_ID or NEXT_PUBLIC_PRIVY_APP_ID, plus PRIVY_APP_SECRET)."
     );
   }
   if (!_privy) {

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSendTransaction } from "@privy-io/react-auth";
+import { usePrivy, useSendTransaction, useSessionSigners } from "@privy-io/react-auth";
 import { encodeFunctionData, erc20Abi, isAddress, parseUnits } from "viem";
 import { defaultChain } from "@/lib/chains";
 import { getUsdcAddress, USDC_DECIMALS } from "@/lib/usdc";
 import { countryFlag, countryName } from "@/lib/countries";
 import Sheet from "./sheet";
+
+const PRIVY_SIGNER_ID = process.env.NEXT_PUBLIC_PRIVY_SIGNER_ID;
 
 type Recipient = { name?: string; country?: string } | null;
 
@@ -31,6 +33,8 @@ export default function SendSheet({
   initialWhen?: "now" | "schedule";
 }) {
   const { sendTransaction } = useSendTransaction();
+  const { getAccessToken } = usePrivy();
+  const { addSessionSigners } = useSessionSigners();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -106,9 +110,22 @@ export default function SendSheet({
     if (!canSchedule || !address) return;
     setStatus({ kind: "sending" });
     try {
+      // Grant the app's session signer so scheduled payments can auto-execute
+      // server-side (idempotent — "already added" is fine).
+      if (PRIVY_SIGNER_ID) {
+        try {
+          await addSessionSigners({ address, signers: [{ signerId: PRIVY_SIGNER_ID }] });
+        } catch (e) {
+          if (!/duplicate|already/i.test(e instanceof Error ? e.message : "")) throw e;
+        }
+      }
+      const token = await getAccessToken();
       const res = await fetch("/api/schedules", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           owner: address,
           to,
@@ -188,10 +205,11 @@ export default function SendSheet({
             {amountNum.toFixed(2)} USDC
           </p>
           <p className="text-ink-soft text-sm">
-            scheduled to {recipient?.name ?? "recipient"} {label}, starting {startDate}.
+            will auto-send to {recipient?.name ?? "recipient"} {label}, starting {startDate}.
           </p>
           <p className="text-ink-soft text-xs">
-            Manage it anytime from “Scheduled” on your home screen.
+            Runs automatically — manage or cancel it anytime from Scheduled
+            payments on your home screen.
           </p>
           <button
             onClick={close}
